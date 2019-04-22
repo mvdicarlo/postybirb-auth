@@ -54,41 +54,6 @@
     "tslint": "5.12.1",
     "typescript": "^3.2.4"
   },
-  "now": {
-    "alias": "postybirb-auth",
-    "name": "postybirb-auth",
-    "env": {
-      "DA_KEY": "@da_key",
-      "DA_SECRET": "@da_secret",
-      "DB_PASSWORD": "@db_password",
-      "MASTODON_KEY": "@mastodon_key",
-      "MASTODON_SECRET": "@mastodon_secret",
-      "MASTODON_ART_KEY": "@mastodon_art_key",
-      "MASTODON_ART_SECRET": "@mastodon_art_secret",
-      "TUMBLR_KEY": "@tumblr_key",
-      "TUMBLR_SECRET": "@tumblr_secret",
-      "TWITTER_KEY": "@twitter_key",
-      "TWITTER_SECRET": "@twitter_secret"
-    },
-    "files": [
-      "src",
-      "nodemon.json",
-      "package.json",
-      "tsconfig.build.json",
-      "tsconfig.json",
-      "tslint.json"
-    ],
-    "scale": {
-      "sfo1": {
-        "min": 1,
-        "max": 2
-      },
-      "bru1": {
-        "min": 1,
-        "max": 2
-      }
-    }
-  },
   "jest": {
     "moduleFileExtensions": [
       "js",
