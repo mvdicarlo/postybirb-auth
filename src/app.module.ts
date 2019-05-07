@@ -9,7 +9,11 @@ import { TumblrModule } from './tumblr/tumblr.module';
 
 @Module({
   imports: [
-    MongooseModule.forRoot(`mongodb://postybirb:${process.env.DB_PASSWORD}@ds247648.mlab.com:47648/postybirb`, { useNewUrlParser: true }),
+    MongooseModule.forRoot(`mongodb://postybirb:${process.env.DB_PASSWORD}@ds247648.mlab.com:47648/postybirb`, {
+      useNewUrlParser: true,
+      reconnectTries: Number.MAX_VALUE,
+      reconnectInterval: 1000
+    }),
     MastodonModule,
     TwitterModule,
     DeviantArtModule,
