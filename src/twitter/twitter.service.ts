@@ -3,6 +3,7 @@ import * as TwitterAPI from 'node-twitter-api';
 import { OAuth } from 'oauth';
 import { TwitterAuthDto, TwitterPostDto, MediaObject } from './twitter.interface';
 import * as request from 'request';
+import * as partition from 'partition-all';
 
 @Injectable()
 export class TwitterService {
@@ -66,10 +67,6 @@ export class TwitterService {
   }
 
   public async postStatus(postData: TwitterPostDto): Promise<any> {
-    if (postData.status && postData.status.length > 280) {
-      throw new HttpException('Status is longer than 280 characters', 400);
-    }
-
     const clientAuth = this.getAuthGenerator();
 
     // Status with media content
@@ -80,32 +77,28 @@ export class TwitterService {
         callback: 'oob',
       });
 
-      const uploadPromises = postData.medias.slice(0, 4).map(media => this.uploadMedia(api, clientAuth, media, postData.token, postData.secret));
-
+      const uploadPromises = postData.medias.map(media => this.uploadMedia(api, clientAuth, media, postData.token, postData.secret));
+      let primaryStatusId: string = null;
       try {
         const results = await Promise.all(uploadPromises);
-        const res: any = await new Promise((resolve) => {
-          clientAuth.post('https://api.twitter.com/1.1/statuses/update.json', postData.token, postData.secret, {
-            status: postData.status,
-            media_ids: results.slice(0, 4).join(','),
-          }, (err, data, resp) => {
-            if (err) {
-              this.logger.error('Failed to upload image status');
-              this.logger.error(err);
-              resolve({ error: err });
-            } else {
-              resolve({});
-            }
-          });
-        });
+        const partitions: any[] = partition(4, results);
+        const allRes = [];
+        for (let i = 0; i < partitions.length; i++) {
+          const p = partitions[i];
+          const res: any = await this.postMedias(p, clientAuth, postData, primaryStatusId);
+          allRes.push(res);
+          if (res.error) {
+            throw new HttpException(res.error, 500);
+          }
 
-        if (res.error) {
-          throw new HttpException(res.error, 500);
+          if (res.data && !primaryStatusId) {
+            const data = JSON.parse(res.data);
+            primaryStatusId = data.id;
+          }
         }
 
-        return res;
+        return allRes;
       } catch (err) {
-        console.log(err)
         this.logger.error(err);
         throw new HttpException(err, 500);
       }
@@ -118,7 +111,14 @@ export class TwitterService {
           if (err) {
             this.logger.error('Failed to upload text status');
             this.logger.error(err);
-            resolve({ error: err });
+            const errors = [];
+            if (err.data) {
+              const json = JSON.parse(err.data);
+              json.errors.forEach(e => {
+                errors.push(e.message);
+              });
+            }
+            resolve({ error: errors });
           } else {
             resolve({});
           }
@@ -131,6 +131,41 @@ export class TwitterService {
 
       return res;
     }
+  }
+
+  private postMedias(results: any[], clientAuth: any, postData: any, replyId?: any): Promise<any> {
+    const post: any = {
+      status: postData.status,
+      media_ids: results.slice(0, 4).join(','),
+    };
+
+    if (postData.sensitive) {
+      post.possibly_sensitive = true;
+    }
+
+    if (replyId) {
+      post.in_reply_to_status_id = replyId;
+    }
+
+    return new Promise((resolve) => {
+      clientAuth.post('https://api.twitter.com/1.1/statuses/update.json', postData.token, postData.secret, post,
+        (err, data, resp) => {
+          if (err) {
+            this.logger.error('Failed to upload image status');
+            this.logger.error(err);
+            const errors = [];
+            if (err.data) {
+              const json = JSON.parse(err.data);
+              json.errors.forEach(e => {
+                errors.push(e.message);
+              });
+            }
+            resolve({ error: errors });
+          } else {
+            resolve({ data });
+          }
+        });
+    });
   }
 
   private async uploadMedia(api: any, clientAuth: any, media: MediaObject, token: string, secret: string): Promise<string> {

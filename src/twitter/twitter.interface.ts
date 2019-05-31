@@ -9,6 +9,7 @@ export interface TwitterPostDto {
   medias?: MediaObject[];
   secret: string;
   token: string;
+  sensitive: boolean;
 }
 
 export interface MediaObject {

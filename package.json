@@ -30,6 +30,7 @@
     "mongoose": "^5.5.1",
     "node-twitter-api": "^1.8.0",
     "oauth": "^0.9.15",
+    "partition-all": "^1.0.1",
     "reflect-metadata": "^0.1.12",
     "request": "^2.88.0",
     "requestretry": "^4.0.0",
