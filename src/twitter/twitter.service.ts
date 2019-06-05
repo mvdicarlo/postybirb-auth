@@ -4,10 +4,13 @@ import { OAuth } from 'oauth';
 import { TwitterAuthDto, TwitterPostDto, MediaObject } from './twitter.interface';
 import * as request from 'request';
 import * as partition from 'partition-all';
+import * as streamify from 'streamifier';
+import { Readable } from 'stream';
 
 @Injectable()
 export class TwitterService {
   private readonly logger: Logger = new Logger(TwitterService.name);
+  private readonly MAX_FILE_CHUNK: number = 5 * 1024 * 1024;
 
   private readonly TWITTER: any = {
     key: process.env.TWITTER_KEY,
@@ -77,7 +80,7 @@ export class TwitterService {
         callback: 'oob',
       });
 
-      const uploadPromises = postData.medias.map(media => this.uploadMedia(api, clientAuth, media, postData.token, postData.secret));
+      const uploadPromises = postData.medias.map(media => this.upload(clientAuth, media, postData.token, postData.secret));
       let primaryStatusId: string = null;
       try {
         const results = await Promise.all(uploadPromises);
@@ -168,118 +171,98 @@ export class TwitterService {
     });
   }
 
-  private async uploadMedia(api: any, clientAuth: any, media: MediaObject, token: string, secret: string): Promise<string> {
-    if (media.type.includes('image') && !media.type.includes('gif')) {
-      return await new Promise((resolve, reject) => {
-        api.uploadMedia({
-          media: media.base64,
-          isBase64: true
-        }, token, secret, (err, res) => {
-          if (err || res.errors) {
-            this.logger.error('Failed to upload media');
-            err ? this.logger.error(err) : this.logger.error(res);
-            reject('Failed to upload media');
+  private async upload(auth: any, media: MediaObject, token: string, secret: string): Promise<any> {
+    const buffer: Buffer = Buffer.from(media.base64, 'base64');
+    const data: any = {
+      command: 'INIT',
+      media_type: media.type,
+      total_bytes: buffer.length,
+      media_category: 'tweet_image'
+    };
+
+    if (media.type.includes('image') && media.type.includes('gif')) {
+      data.media_category = 'tweet_gif';
+    } else if (media.type.includes('video')) {
+      data.media_category = 'tweet_video';
+    }
+
+    const media_id = await new Promise((resolve, reject) => {
+      auth.post('https://upload.twitter.com/1.1/media/upload.json', token, secret, data,
+        (e, data, resp) => {
+          if (e) {
+            this.logger.error(e);
+            reject(e);
           } else {
-            resolve(res.media_id_string);
+            let id = null;
+            try {
+              id = typeof data === 'string' ? JSON.parse(data).media_id_string : data.media_id_string;
+              resolve(id);
+            } catch (parseError) {
+              reject(parseError);
+              return;
+            }
           }
         });
-      });
-    } else {
-      return await this.uploadMediaChunked(clientAuth, media, token, secret);
-    }
-  }
-
-  /*
-  * This is using legacy code from old upload server code because I am too lazy to refactor it right now
-  */
-  private uploadMediaChunked(auth: any, media: MediaObject, token: string, secret: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const buf = Buffer.from(media.base64, 'base64');
-      auth.post('https://upload.twitter.com/1.1/media/upload.json', token, secret, {
-        command: 'INIT',
-        media_type: media.type,
-        total_bytes: buf.length,
-        media_category: media.type.includes('gif') ? 'tweet_gif' : 'tweet_video',
-      }, (e, data, resp) => {
-        if (e) {
-          this.logger.error(e);
-          reject(e);
-        } else {
-          let id = null;
-          try {
-            id = typeof data === 'string' ? JSON.parse(data).media_id_string : data.media_id_string;
-          } catch (parseError) {
-            reject(parseError);
-            return;
-          }
-
-          const chunkSize = 1000000;
-          const promises = [];
-
-          let segment = 0;
-          let offset = 0;
-          while (offset < buf.length) {
-            const chunk = buf.length < chunkSize ? buf.slice(0, chunkSize) : buf;
-            promises.push(this.uploadChunk(segment, chunk, token, secret, id));
-            segment += 1;
-            offset += chunkSize;
-          }
-
-          Promise.all(promises)
-            .then(() => {
-              auth.post('https://upload.twitter.com/1.1/media/upload.json', token, secret, {
-                command: 'FINALIZE',
-                media_id: id,
-              }, (e, data, resp) => {
-                if (e) {
-                  this.logger.error('Failed to upload media chunks');
-                  this.logger.error(e);
-                  reject(e);
-                } else {
-                  resolve(id);
-                }
-              });
-            })
-            .catch((err) => {
-              reject('Error uploading chunked media data');
-            });
-        }
-      });
     });
-  }
 
-  /*
-  * This is using legacy code from old upload server code because I am too lazy to refactor it right now
-  */
-  private uploadChunk(segment: any, chunk: any, token: string, secret: string, media_id: any) {
-    return new Promise((resolve, reject) => {
+    const readable: Readable = streamify.createReadStream(buffer);
+    let buf: any;
+    let partitions: Buffer[] = [];
+    while ((buf = readable.read(Math.min(this.MAX_FILE_CHUNK, buffer.length)))) {
+      partitions.push(buf);
+    }
+
+    const oauth = {
+      consumer_key: this.TWITTER.key,
+      consumer_secret: this.TWITTER.secret,
+      token,
+      token_secret: secret,
+    };
+
+    const promises: Promise<boolean>[] = [];
+    for (let i = 0; i < partitions.length; i++) {
+      const partition = partitions[i];
       const formData = {
         command: 'APPEND',
         media_id,
-        media_data: chunk.toString('base64'),
-        segment_index: segment,
+        media_data: partition.toString('base64'),
+        segment_index: i,
       };
 
-      const oauth = {
-        consumer_key: this.TWITTER.key,
-        consumer_secret: this.TWITTER.secret,
-        token,
-        token_secret: secret,
-      };
+      promises.push(new Promise((resolve, reject) => {
+        request.post({
+          url: 'https://upload.twitter.com/1.1/media/upload.json',
+          oauth,
+          formData,
+        }, (err, resp, body) => {
+          if (err) {
+            this.logger.error(err);
+            reject(err);
+          } else {
+            resolve(true);
+          }
+        });
+      }));
+    }
 
-      request.post({
-        url: 'https://upload.twitter.com/1.1/media/upload.json',
-        oauth,
-        formData,
-      }, (err, resp, body) => {
-        if (err) {
-          this.logger.error(err);
-          reject(err);
+    const uploadedChunks = await Promise.all(promises);
+
+    const finalizePromise = await new Promise((resolve, reject) => {
+      auth.post('https://upload.twitter.com/1.1/media/upload.json', token, secret, {
+        command: 'FINALIZE',
+        media_id,
+      }, (e, data, resp) => {
+        if (e) {
+          this.logger.error('Failed to upload media chunks');
+          this.logger.error(e);
+          reject(e);
         } else {
-          resolve(true);
+          resolve();
         }
       });
     });
+
+    return media_id;
   }
 
 }
