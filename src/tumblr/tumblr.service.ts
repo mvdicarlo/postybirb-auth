@@ -185,6 +185,10 @@ export class TumblrService {
           json = JSON.parse(body);
         } catch (e) {
           this.logger.error('Unable to parse body from tumblr post');
+          this.logger.error(body);
+          this.logger.error(err);
+          reject(body);
+          return;
         }
 
         if (err || json.errors) {
