@@ -191,7 +191,15 @@ export class TwitterService {
         (e, data, resp) => {
           if (e) {
             this.logger.error(e);
-            reject(e);
+            if (e.data) {
+              let data: any = e.data
+              try {
+                const json = JSON.parse(data);
+                data = json.errors.map(err => err.message);
+              } catch (err) {}
+              reject(data);
+            }
+            else reject(e);
           } else {
             let id = null;
             try {
