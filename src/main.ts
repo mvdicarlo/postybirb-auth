@@ -8,6 +8,6 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
   app.use(bodyParser.json({ limit: '30mb' }));
   app.use(bodyParser.urlencoded({ limit: '1mb', extended: false }));
-  await app.listen(3000);
+  await app.listen(process.env.PORT || 3000);
 }
 bootstrap();
