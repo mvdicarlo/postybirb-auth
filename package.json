@@ -39,7 +39,7 @@
     "rxjs": "^6.3.3",
     "streamifier": "^0.1.1",
     "tumblr.js": "^2.0.0",
-    "validator": "^10.11.0"
+    "validator": "^13.7.0"
   },
   "devDependencies": {
     "@nestjs/testing": "^6.0.0",
